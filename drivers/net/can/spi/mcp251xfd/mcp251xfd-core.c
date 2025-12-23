@@ -965,7 +965,23 @@ static int mcp251xfd_handle_rxovif(struct mcp251xfd_priv *priv)
 
 static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 {
-	netdev_info(priv->ndev, "%s\n", __func__);
+	// MCP251XFD_FIFO_TX_NUM is defined as 1, hence we only work with one index [0]
+	struct mcp251xfd_tx_ring *tx_ring = &priv->tx[0];
+	int err;
+
+	//must update for the read only's changes
+	err = regmap_update_bits(priv->map_reg,
+				MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
+				MCP251XFD_REG_FIFOSTA_TXATIF,
+				0x0);
+	if (err)
+		return err;
+
+	tx_ring->tail++;
+
+	netif_wake_queue(priv->ndev);
+
+	netdev_info(priv->ndev, "One-shot attempt fail handled. Tail moved to %u\n", tx_ring->tail);
 
 	return 0;
 }
@@ -1546,6 +1562,7 @@ static irqreturn_t mcp251xfd_irq(int irq, void *dev_id)
 				goto out_fail;
 		}
 
+		// When the Transmit Attempt Interrupt Flag bit (BIT 10) is set high we must clear the flag by application 
 		if (intf_pending & MCP251XFD_REG_INT_TXATIF) {
 			err = mcp251xfd_handle(priv, txatif);
 			if (err)
