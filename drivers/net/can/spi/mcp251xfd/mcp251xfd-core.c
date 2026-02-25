@@ -1017,10 +1017,11 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 		smp_mb();
 		netif_wake_queue(priv->ndev);
 
-		netdev_info(priv->ndev, "One-shot send attempt fail handled. 
-					Ring advanced to %u\n", tx_ring->tail
-					);
-
+		netdev_info(priv->ndev,
+		"One-shot send attempt fail handled. "
+		"Ring advanced to %u\n",
+		tx_ring->tail);
+		
 		return 0;
 	}
 
