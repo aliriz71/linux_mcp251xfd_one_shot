@@ -972,6 +972,9 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 
 	if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT)
 	{
+		u32 fifosta;
+		regmap_read(priv->map_reg, MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr), &fifosta);
+		netdev_info(priv->ndev, "FIFO Status: 0x%08x (Full if bit0 is 0)\n", fifosta);
 		
 		//must update interruput flags for the read only's bits to be reset via application
 		err = regmap_update_bits(priv->map_reg,
@@ -988,18 +991,14 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 		tx_tail = mcp251xfd_get_tx_tail(tx_ring);
 		can_free_echo_skb(priv->ndev, tx_tail, NULL);
 		
-		/*
-		 * Increment the pointer for the TX FIFO tell the chip
-		 * we are done with the FIFO TX NUM entry
-		 * ARGS:
-		 * - SPI device
-		 * - xfers: array of spi_transfers
-		 * NOTE: The very last uinc_xfer holds the 
-		 * command to "cs_change == 0" so that chip select can be deactivated 
-		 * - num_xfers: number of items in the xfer array
-		 * NOTE: only the one failed attempt item to sync 
-		 */ 
-		err = spi_sync_transfer(priv->spi, tx_ring->uinc_xfer + (ARRAY_SIZE(tx_ring->uinc_xfer) - 1), 1);
+		// Manually move the HW's TX FIFO pointer forward
+		// When this bit is set, the FIFO tail will increment by a single message.
+		err = regmap_update_bits(priv->map_reg,	
+							 MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
+							 MCP251XFD_REG_FIFOCON_UINC,
+							 MCP251XFD_REG_FIFOCON_UINC);
+		if (err)
+			return err
 
 		// Advance the TEF tail for one-shot failed frame, so that the TEF entry is freed and can be used for the next transmission.
 		tx_ring->tail++;
