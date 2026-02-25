@@ -998,7 +998,7 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 							 MCP251XFD_REG_FIFOCON_UINC,
 							 MCP251XFD_REG_FIFOCON_UINC);
 		if (err)
-			return err
+			return err;
 
 		// Advance the TEF tail for one-shot failed frame, so that the TEF entry is freed and can be used for the next transmission.
 		tx_ring->tail++;
