@@ -966,28 +966,46 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 {
     struct mcp251xfd_tx_ring *tx_ring = &priv->tx[0];
     int err;
+	u32 fifosta;
 
     if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT) {
-        /* 1. Clear the hardware interrupt bit (TXATIF) */
+        /* Clear the hardware interrupt bit (TXATIF) */
         err = regmap_update_bits(priv->map_reg,
                                  MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
                                  MCP251XFD_REG_FIFOSTA_TXATIF, 0x0);
-        if (err) return err;
+        if (err) 
+			return err;
 
-        /* 2. PHYSICALLY move the HW pointers forward.
+		// Read current FIFO status and check if TXABT (bit 7) is high
+		regmap_read(priv->map_reg, MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr), &fifosta);
+		if (fifosta & MCP251XFD_REG_FIFOSTA_TXABT) {
+			netdev_info(priv->ndev, "Verification: Hardware confirms message was ABORTED.\n");
+		} else {
+			netdev_info(priv->ndev, "Verification: Hardware did not set TXABT yet. Status: 0x%08x\n", fifosta);
+		}
+
+		err = regmap_update_bits(priv->map_reg,
+                                 MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
+                                 MCP251XFD_REG_FIFOCON_TXREQ, 0x0);
+		if (err) 
+			return err;
+		
+		regmap_read(priv->map_reg, MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr), &fifosta);
+		if (fifosta & MCP251XFD_REG_FIFOSTA_TXABT) {
+			netdev_info(priv->ndev, "Post-Abort Verify: TXABT is CONFIRMED.\n");
+		} else {
+			netdev_info(priv->ndev, "Post-Abort Warning: TXABT NOT set. Status: 0x%08x\n", fifosta);
+		}
+        /* PHYSICALLY move the HW pointers forward.
          * This "flushes" the aborted entry from the hardware RAM.
          * We do NOT increment software tails here.
          */
-        regmap_update_bits(priv->map_reg, MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
-                           MCP251XFD_REG_FIFOCON_UINC, MCP251XFD_REG_FIFOCON_UINC);
+        // regmap_update_bits(priv->map_reg, MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
+        //                    MCP251XFD_REG_FIFOCON_UINC, MCP251XFD_REG_FIFOCON_UINC);
         
-        regmap_update_bits(priv->map_reg, MCP251XFD_REG_TEFCON,
-                           MCP251XFD_REG_TEFCON_UINC, MCP251XFD_REG_TEFCON_UINC);
+        // regmap_update_bits(priv->map_reg, MCP251XFD_REG_TEFCON,
+        //                    MCP251XFD_REG_TEFCON_UINC, MCP251XFD_REG_TEFCON_UINC);
 
-        /* 3. The move above will trigger the TEFIF interrupt automatically.
-         * The standard 'mcp251xfd_handle_tefif' will now fire, see the aborted
-         * event, increment the software tails, and wake the queue.
-         */
         netdev_info(priv->ndev, "One-shot HW block cleared. Handing off to TEFIF.\n");
         return 0;
     }
@@ -1639,7 +1657,8 @@ static irqreturn_t mcp251xfd_irq(int irq, void *dev_id)
 				goto out_fail;
 		}
 
-		// When the Transmit Attempt Interrupt Flag bit (BIT 10) is set high we must clear the flag by application 
+		// When the Transmit Attempt Interrupt Flag bit (BIT 10) is set high 
+		// we must clear the global flag by application 
 		if (intf_pending & MCP251XFD_REG_INT_TXATIF) {
 			err = mcp251xfd_handle(priv, txatif);
 			if (err)
