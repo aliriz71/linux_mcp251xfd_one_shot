@@ -965,8 +965,7 @@ static int mcp251xfd_handle_rxovif(struct mcp251xfd_priv *priv)
 
 static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 {
-	struct mcp251xfd_tx_ring *tx_ring = priv->tx;
-	struct mcp251xfd_tef_ring *tef_ring = priv->tef;
+	struct mcp251xfd_tx_ring *tx_ring = &priv->tx[0];
 	struct net_device_stats *stats = &priv->ndev->stats;
 	u8 tx_tail;
 	int err;
