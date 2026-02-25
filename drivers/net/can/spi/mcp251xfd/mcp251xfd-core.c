@@ -1004,7 +1004,7 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 
 		// Advance the TEF tail for one-shot failed frame, so that the TEF entry is freed and can be used for the next transmission.
 		tx_ring->tail++;
-		priv->tef->tail++;
+		// let the tail be incremented by tefif handler priv->tef->tail++;
 
 		netdev_completed_queue(priv->ndev, 1, 0);		//int 1 packet, 0 bytes (packet was aborted, it is not counted as bytes sent).
 		netif_wake_queue(priv->ndev);
