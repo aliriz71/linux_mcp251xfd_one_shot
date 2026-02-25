@@ -1000,15 +1000,26 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 		if (err)
 			return err;
 
-		// Advance the TEF tail for one-shot failed frame, so that the TEF entry is freed and can be used for the next transmission.
-		tx_ring->tail++;
-		// let the tail be incremented by tefif handler priv->tef->tail++;
+		err = regmap_update_bits(priv->map_reg, 
+                             MCP251XFD_REG_TEFCON,
+                             MCP251XFD_REG_TEFCON_UINC,
+                             MCP251XFD_REG_TEFCON_UINC);
+        if (err) 
+			return err;
 
-		netdev_completed_queue(priv->ndev, 1, 0);		//int 1 packet, 0 bytes (packet was aborted, it is not counted as bytes sent).
+		// Advance the TEF tail for one-shot failed frame, so that the TEF entry is freed 
+		// and can be used for the next transmission.
+		tx_ring->tail++;
+		priv->tef->tail++;
+
+		//int 1 packet, 0 bytes (packet was aborted, it is not counted as bytes sent).
+		netdev_completed_queue(priv->ndev, 1, 0);		
 		smp_mb();
 		netif_wake_queue(priv->ndev);
 
-		netdev_info(priv->ndev, "One-shot send attempt fail handled. Ring advanced to %u\n", tx_ring->tail);
+		netdev_info(priv->ndev, "One-shot send attempt fail handled. 
+					Ring advanced to %u\n", tx_ring->tail
+					);
 
 		return 0;
 	}
