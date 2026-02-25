@@ -541,7 +541,7 @@ static int mcp251xfd_set_bittiming(const struct mcp251xfd_priv *priv)
 	 * - ESI is transmitted recessive when ESI of message is high or
 	 *   CAN controller error passive
 	 * - restricted retransmission attempts,
-	 *   use TQXCON_TXAT and FIFOCON_TXAT
+	 *   use TXQCON_TXAT and FIFOCON_TXAT
 	 * - wake-up filter bits T11FILTER
 	 * - use CAN bus line filter for wakeup
 	 * - protocol exception is treated as a form error
@@ -965,25 +965,61 @@ static int mcp251xfd_handle_rxovif(struct mcp251xfd_priv *priv)
 
 static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 {
-	// MCP251XFD_FIFO_TX_NUM is defined as 1, hence we only work with one index [0]
 	struct mcp251xfd_tx_ring *tx_ring = &priv->tx[0];
+	struct mcp251xfd_tef_ring *tef_ring = priv->tef;
+	struct net_device_stats *stats = &priv->ndev->stats;
+	u8 tx_tail;
 	int err;
 
-	//must update for the read only's changes
-	err = regmap_update_bits(priv->map_reg,
-				MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
-				MCP251XFD_REG_FIFOSTA_TXATIF,
-				0x0);
-	if (err)
-		return err;
+	if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT)
+	{
+		
+		//must update interruput flags for the read only's bits to be reset via application
+		err = regmap_update_bits(priv->map_reg,
+					MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
+					MCP251XFD_REG_FIFOSTA_TXATIF,
+					0x0);
+		if (err)
+			return err;
+		
+		stats->tx_aborted_errors++;
+		stats->tx_errors++;
+		
+		// Free the echo SKB so that stack knows that the packet has been sent (even though it was aborted).
+		tx_tail = mcp251xfd_get_tx_tail(tx_ring);
+		can_free_echo_skb(priv->ndev, tx_tail, NULL);
+		
+		/*
+		 * Increment the TEF FIFO tail pointer to tell the chip
+		 * we are done with the TEF entry
+		 * ARGS:
+		 * - SPI device
+		 * - xfers: array of spi_transfers
+		 * NOTE: The very last uinc_xfer holds the 
+		 * command to "cs_change == 0" so that chip select can be deactivated 
+		 * - num_xfers: number of items in the xfer array
+		 * NOTE: only the one failed attempt item to sync 
+		 */ 
+		err = spi_sync_transfer(priv->spi, tef_ring->uinc_xfer + (ARRAY_SIZE(tef_ring->uinc_xfer) - 1), 1);
 
-	tx_ring->tail++;
+		// Advance the TEF tail for one-shot failed frame, so that the TEF entry is freed and can be used for the next transmission.
+		tx_ring->tail++;
+		priv->tef->tail++;
 
-	netif_wake_queue(priv->ndev);
+		netdev_completed_queue(priv->ndev, 1, 0);		//int 1 packet, 0 bytes (packet was aborted, it is not counted as bytes sent).
+		netif_wake_queue(priv->ndev);
 
-	netdev_info(priv->ndev, "One-shot attempt fail handled. Tail moved to %u\n", tx_ring->tail);
+		netdev_info(priv->ndev, "One-shot send attempt fail handled. Ring advanced to %u\n", tx_ring->tail);
 
-	return 0;
+		return 0;
+	}
+
+	else
+	{
+		netdev_info(priv->ndev, "%s\n", __func__);
+		
+		return 0;
+	}
 }
 
 static int mcp251xfd_handle_ivmif(struct mcp251xfd_priv *priv)
