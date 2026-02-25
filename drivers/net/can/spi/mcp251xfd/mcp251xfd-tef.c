@@ -82,6 +82,9 @@ mcp251xfd_handle_tefif_one(struct mcp251xfd_priv *priv,
 	tef_tail_masked = priv->tef->tail &
 		field_mask(MCP251XFD_OBJ_FLAGS_SEQ_MCP2517FD_MASK);
 
+	netdev_info(priv->ndev, "TEF check: HW_SEQ=0x%x, SW_SEQ=0x%x, Current_Tail=%u\n",
+		    seq, tef_tail_masked, priv->tef->tail);
+
 	/* According to mcp2518fd erratum DS80000789E 6. the FIFOCI
 	 * bits of a FIFOSTA register, here the TX FIFO tail index
 	 * might be corrupted and we might process past the TEF FIFO's
@@ -94,6 +97,7 @@ mcp251xfd_handle_tefif_one(struct mcp251xfd_priv *priv,
 	if (seq != tef_tail_masked) {
 		netdev_dbg(priv->ndev, "%s: chip=0x%02x ring=0x%02x\n", __func__,
 			   seq, tef_tail_masked);
+		netdev_err(priv->ndev, "TEF Seq Mismatch! chip=0x%02x ring=0x%02x\n", seq, tef_tail_masked);
 		stats->tx_fifo_errors++;
 
 		return -EBADMSG;
@@ -275,6 +279,7 @@ out_netif_wake_queue:
 			return err;
 
 		tx_ring->tail += len;
+		netdev_info(priv->ndev, "TEF Cleaned %u items. New TX Ring Tail: %u\n", len, tx_ring->tail);
 		netdev_completed_queue(priv->ndev, len, total_frame_len);
 
 		err = mcp251xfd_check_tef_tail(priv);

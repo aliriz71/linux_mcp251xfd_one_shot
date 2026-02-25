@@ -988,7 +988,7 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
          * The standard 'mcp251xfd_handle_tefif' will now fire, see the aborted
          * event, increment the software tails, and wake the queue.
          */
-        netdev_dbg(priv->ndev, "One-shot HW block cleared. Handing off to TEFIF.\n");
+        netdev_info(priv->ndev, "One-shot HW block cleared. Handing off to TEFIF.\n");
         return 0;
     }
     return 0;
