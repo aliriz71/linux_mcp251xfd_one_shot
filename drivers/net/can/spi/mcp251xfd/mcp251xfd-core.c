@@ -962,7 +962,38 @@ static int mcp251xfd_handle_rxovif(struct mcp251xfd_priv *priv)
 
 	return 0;
 }
+static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
+{
+    struct mcp251xfd_tx_ring *tx_ring = &priv->tx[0];
+    int err;
 
+    if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT) {
+        /* 1. Clear the hardware interrupt bit (TXATIF) */
+        err = regmap_update_bits(priv->map_reg,
+                                 MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
+                                 MCP251XFD_REG_FIFOSTA_TXATIF, 0x0);
+        if (err) return err;
+
+        /* 2. PHYSICALLY move the HW pointers forward.
+         * This "flushes" the aborted entry from the hardware RAM.
+         * We do NOT increment software tails here.
+         */
+        regmap_update_bits(priv->map_reg, MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
+                           MCP251XFD_REG_FIFOCON_UINC, MCP251XFD_REG_FIFOCON_UINC);
+        
+        regmap_update_bits(priv->map_reg, MCP251XFD_REG_TEFCON,
+                           MCP251XFD_REG_TEFCON_UINC, MCP251XFD_REG_TEFCON_UINC);
+
+        /* 3. The move above will trigger the TEFIF interrupt automatically.
+         * The standard 'mcp251xfd_handle_tefif' will now fire, see the aborted
+         * event, increment the software tails, and wake the queue.
+         */
+        netdev_dbg(priv->ndev, "One-shot HW block cleared. Handing off to TEFIF.\n");
+        return 0;
+    }
+    return 0;
+}
+/*
 static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 {
 	struct mcp251xfd_tx_ring *tx_ring = &priv->tx[0];
@@ -1021,7 +1052,6 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 		"One-shot send attempt fail handled. "
 		"Ring advanced to %u\n",
 		tx_ring->tail);
-		
 		return 0;
 	}
 
@@ -1032,7 +1062,7 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 		return 0;
 	}
 }
-
+*/
 static int mcp251xfd_handle_ivmif(struct mcp251xfd_priv *priv)
 {
 	struct net_device_stats *stats = &priv->ndev->stats;
