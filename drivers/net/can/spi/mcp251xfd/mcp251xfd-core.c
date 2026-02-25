@@ -965,7 +965,7 @@ static int mcp251xfd_handle_rxovif(struct mcp251xfd_priv *priv)
 
 static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 {
-	struct mcp251xfd_tx_ring *tx_ring = &priv->tx[0];
+	struct mcp251xfd_tx_ring *tx_ring = priv->tx;
 	struct mcp251xfd_tef_ring *tef_ring = priv->tef;
 	struct net_device_stats *stats = &priv->ndev->stats;
 	u8 tx_tail;
@@ -990,8 +990,8 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 		can_free_echo_skb(priv->ndev, tx_tail, NULL);
 		
 		/*
-		 * Increment the TEF FIFO tail pointer to tell the chip
-		 * we are done with the TEF entry
+		 * Increment the pointer for the TX FIFO tell the chip
+		 * we are done with the FIFO TX NUM entry
 		 * ARGS:
 		 * - SPI device
 		 * - xfers: array of spi_transfers
@@ -1000,13 +1000,14 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 		 * - num_xfers: number of items in the xfer array
 		 * NOTE: only the one failed attempt item to sync 
 		 */ 
-		err = spi_sync_transfer(priv->spi, tef_ring->uinc_xfer + (ARRAY_SIZE(tef_ring->uinc_xfer) - 1), 1);
+		err = spi_sync_transfer(priv->spi, tx_ring->uinc_xfer + (ARRAY_SIZE(tx_ring->uinc_xfer) - 1), 1);
 
 		// Advance the TEF tail for one-shot failed frame, so that the TEF entry is freed and can be used for the next transmission.
 		tx_ring->tail++;
 		// let the tail be incremented by tefif handler priv->tef->tail++;
 
 		netdev_completed_queue(priv->ndev, 1, 0);		//int 1 packet, 0 bytes (packet was aborted, it is not counted as bytes sent).
+		smp_mb();
 		netif_wake_queue(priv->ndev);
 
 		netdev_info(priv->ndev, "One-shot send attempt fail handled. Ring advanced to %u\n", tx_ring->tail);
