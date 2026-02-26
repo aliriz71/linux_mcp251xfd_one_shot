@@ -967,39 +967,60 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 {
 	struct mcp251xfd_tx_ring *tx_ring = priv->tx;
     int err;
-	u32 fifosta;
+	u32 sta_before, sta_after;
 
-    if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT) {
+    if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT) 
+	{
+        /* Read status before increment to capture current index */
+        regmap_read(priv->map_reg, MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr), &sta_before);
+
+		/* Clear the hardware interrupt bit (TXATIF) */
+        err = regmap_update_bits(priv->map_reg,
+					MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
+					MCP251XFD_REG_FIFOSTA_TXATIF, 
+					0x0);
+        if (err) 
+			return err;
 
 		/* PHYSICALLY move the HW pointers forward.
          * This "flushes" the aborted entry from the hardware RAM.
          * We do NOT increment software tails here.
          */
-        err = regmap_update_bits(priv->map_reg, MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
-                           MCP251XFD_REG_FIFOCON_UINC, MCP251XFD_REG_FIFOCON_UINC);
+        err = regmap_update_bits(priv->map_reg, 
+					MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
+					MCP251XFD_REG_FIFOCON_UINC, 
+					MCP251XFD_REG_FIFOCON_UINC);
         if (err)
             return err;
-        
-        err = regmap_update_bits(priv->map_reg, MCP251XFD_REG_TEFCON,
-                           MCP251XFD_REG_TEFCON_UINC, MCP251XFD_REG_TEFCON_UINC);
-        if (err)
-            return err;
-        /* Clear the hardware interrupt bit (TXATIF) and request message abort TXREQ (FIFOCON bit 9) */
-        err = regmap_update_bits(priv->map_reg,
-                                 MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
-                                 MCP251XFD_REG_FIFOSTA_TXATIF, 0x0);
-        if (err) 
-			return err;
+
+		regmap_read(priv->map_reg, MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr), &sta_after);
+
+		netdev_info(priv->ndev, 
+                    "One-Shot Fail: FIFO %d Index moved %d -> %d\n",
+                    tx_ring->fifo_nr,
+                    (sta_before >> 8) & 0x1F, // Extract FIFOCI [cite: 1691]
+                    (sta_after >> 8) & 0x1F);
+
+		/* Advance to request a new transmission */
+		err = regmap_update_bits(priv->map_reg, 
+                   MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
+                   MCP251XFD_REG_FIFOCON_TXREQ, 
+                   MCP251XFD_REG_FIFOCON_TXREQ);
+		/*
+		// request message abort TXREQ (transmit queue control reg bit 9) is redundant if TXATIF is set
 		err = regmap_update_bits(priv->map_reg,
-                                 MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
-                                 MCP251XFD_REG_FIFOCON_TXREQ, 0x0);
+                                 MCP251XFD_REG_TXQCON(tx_ring->fifo_nr),
+                                 MCP251XFD_REG_TXQCON_TXREQ, 0x0);
 		if (err) 
 			return err;
-		
-        netdev_info(priv->ndev, "One-shot HW block cleared. Handing off to TEFIF.\n");
+		*/
         return 0;
     }
-    return 0;
+	else
+	{
+    	return 0;
+	}
+
 }
 /*
 static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
