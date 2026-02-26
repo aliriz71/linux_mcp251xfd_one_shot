@@ -965,34 +965,37 @@ static int mcp251xfd_handle_rxovif(struct mcp251xfd_priv *priv)
 
 static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 {
-    struct mcp251xfd_tx_ring *tx_ring = &priv->tx[0];
+	struct mcp251xfd_tx_ring *tx_ring = priv->tx;
     int err;
 	u32 fifosta;
 
     if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT) {
-        /* Clear the hardware interrupt bit (TXATIF) */
+
+		/* PHYSICALLY move the HW pointers forward.
+         * This "flushes" the aborted entry from the hardware RAM.
+         * We do NOT increment software tails here.
+         */
+        err = regmap_update_bits(priv->map_reg, MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
+                           MCP251XFD_REG_FIFOCON_UINC, MCP251XFD_REG_FIFOCON_UINC);
+        if (err)
+            return err;
+        
+        err = regmap_update_bits(priv->map_reg, MCP251XFD_REG_TEFCON,
+                           MCP251XFD_REG_TEFCON_UINC, MCP251XFD_REG_TEFCON_UINC);
+        if (err)
+            return err;
+        /* Clear the hardware interrupt bit (TXATIF) and request message abort TXREQ (FIFOCON bit 9) */
         err = regmap_update_bits(priv->map_reg,
                                  MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
                                  MCP251XFD_REG_FIFOSTA_TXATIF, 0x0);
         if (err) 
 			return err;
-
 		err = regmap_update_bits(priv->map_reg,
                                  MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
                                  MCP251XFD_REG_FIFOCON_TXREQ, 0x0);
 		if (err) 
 			return err;
 		
-        /* PHYSICALLY move the HW pointers forward.
-         * This "flushes" the aborted entry from the hardware RAM.
-         * We do NOT increment software tails here.
-         */
-        regmap_update_bits(priv->map_reg, MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
-                           MCP251XFD_REG_FIFOCON_UINC, MCP251XFD_REG_FIFOCON_UINC);
-        
-        regmap_update_bits(priv->map_reg, MCP251XFD_REG_TEFCON,
-                           MCP251XFD_REG_TEFCON_UINC, MCP251XFD_REG_TEFCON_UINC);
-
         netdev_info(priv->ndev, "One-shot HW block cleared. Handing off to TEFIF.\n");
         return 0;
     }
