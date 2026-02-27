@@ -966,6 +966,7 @@ static int mcp251xfd_handle_rxovif(struct mcp251xfd_priv *priv)
 static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 {
 	struct mcp251xfd_tx_ring *tx_ring = priv->tx;
+	struct net_device_stats *stats = &priv->ndev->stats;
     int err;
 	u32 sta_before, sta_after;
 
@@ -977,7 +978,7 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 		/* Clear the hardware interrupt bit (TXATIF) */
         err = regmap_update_bits(priv->map_reg,
 					MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
-					MCP251XFD_REG_FIFOSTA_TXATIF, 
+					MCP251XFD_REG_FIFOSTA_TXATIF | MCP251XFD_REG_FIFOSTA_TXERR | MCP251XFD_REG_FIFOSTA_TXABT,
 					0x0);
         if (err) 
 			return err;
@@ -993,6 +994,12 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
         if (err)
             return err;
 
+		/* Free the echo SKB so that stack knows that the packet has been sent (even though it was aborted). */
+		can_free_echo_skb(priv->ndev, tx_tail, NULL);
+		tx_ring->tail++;
+		stats->tx_errors++;
+		stats->tx_aborted_errors++;
+		
 		regmap_read(priv->map_reg, MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr), &sta_after);
 
 		netdev_info(priv->ndev, 
@@ -1001,11 +1008,16 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
                     (sta_before >> 8) & 0x1F, // Extract FIFOCI [cite: 1691]
                     (sta_after >> 8) & 0x1F);
 
-		/* Advance to request a new transmission */
-		err = regmap_update_bits(priv->map_reg, 
-                   MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
-                   MCP251XFD_REG_FIFOCON_TXREQ, 
-                   MCP251XFD_REG_FIFOCON_TXREQ);
+		/* ADVANCE WITH NEW TRANSMISSION
+	     * This is only needed if there are more messages already waiting in the ring.
+     	*/
+		if (mcp251xfd_get_tx_free(tx_ring) < tx_ring->obj_num) {
+			err = regmap_update_bits(priv->map_reg, 
+									MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
+									MCP251XFD_REG_FIFOCON_TXREQ, 
+									MCP251XFD_REG_FIFOCON_TXREQ);
+		}
+
 		/*
 		// request message abort TXREQ (transmit queue control reg bit 9) is redundant if TXATIF is set
 		err = regmap_update_bits(priv->map_reg,
@@ -1014,6 +1026,8 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 		if (err) 
 			return err;
 		*/
+		netif_wake_queue(priv->ndev);
+
         return 0;
     }
 	else
