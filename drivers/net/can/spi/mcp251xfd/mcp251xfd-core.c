@@ -966,135 +966,112 @@ static int mcp251xfd_handle_rxovif(struct mcp251xfd_priv *priv)
 static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 {
 	struct mcp251xfd_tx_ring *tx_ring = priv->tx;
+	struct mcp251xfd_tef_ring *tef = priv->tef;
 	struct net_device_stats *stats = &priv->ndev->stats;
+	u32 fifo_sta;
+	unsigned int frame_len = 0;
+	u8 tef_tail;
     int err;
-	u32 sta_before, sta_after;
-	u8 tx_tail;
 
+	/* Read status before increment to capture current index */
+	err = regmap_read(priv->map_reg,
+				MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
+				&fifo_sta);
+	if (err) 
+		return err;
 
-    if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT) 
+	/* If TXATIF is not set, there is no aborted/lost frame to handle */
+	if (!(fifo_sta & MCP251XFD_REG_FIFOSTA_TXATIF)) 
+		return 0;
+
+	/*
+		* A tx attempt was made, but the message was not sent 
+		* because of an error (e.g. arbitration loss or bus error/short).
+		* For one-shot mode, the frame did not get on the bus.
+		* 
+		* If handle_tefif has already used a TEF entry for the failed
+		* frame, the echo_skb should be NULL.
+		* 
+		* If no TEF entry was generated, and the TXATIF went off first,
+		* then the TEF entry must be freed here since a successful transmission
+		* did not occur. If that is the case, the echo_skb will be non-NULL 
+		* and is pending. It must be freed here
+		*/
+
+	tef_tail = mcp251xfd_get_tef_tail(priv);
+
+	if (priv->can.echo_skb[tef_tail]) 
 	{
-        /* Read status before increment to capture current index */
-        regmap_read(priv->map_reg, MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr), &sta_before);
-
-		/* Clear the hardware interrupt bit (TXATIF) */
-        err = regmap_update_bits(priv->map_reg,
-					MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
-					MCP251XFD_REG_FIFOSTA_TXATIF | MCP251XFD_REG_FIFOSTA_TXERR | MCP251XFD_REG_FIFOSTA_TXABT,
-					0x0);
-        if (err) 
-			return err;
-
-		/* PHYSICALLY move the HW pointers forward.
-         * This "flushes" the aborted entry from the hardware RAM.
-         */
-        err = regmap_update_bits(priv->map_reg, 
-					MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
-					MCP251XFD_REG_FIFOCON_UINC, 
-					MCP251XFD_REG_FIFOCON_UINC);
-        if (err)
-            return err;
-
-		/* Free the echo SKB so that stack knows that the packet has been sent (even though it was aborted). */
-		tx_tail = mcp251xfd_get_tx_tail(tx_ring);
-		can_free_echo_skb(priv->ndev, tx_tail, NULL);
+		can_free_echo_skb(priv->ndev, tef_tail, &frame_len);
+		tef->tail++;
 		tx_ring->tail++;
-		stats->tx_errors++;
-		stats->tx_aborted_errors++;
-		netdev_completed_queue(priv->ndev, 1, 0);
-
-		regmap_read(priv->map_reg, MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr), &sta_after);
-
-		/* ADVANCE WITH NEW TRANSMISSION
-	     * This is only needed if there are more messages already waiting in the ring.
-     	*/
-		if (mcp251xfd_get_tx_free(tx_ring) < tx_ring->obj_num) {
-			err = regmap_update_bits(priv->map_reg, 
-									MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
-									MCP251XFD_REG_FIFOCON_TXREQ, 
-									MCP251XFD_REG_FIFOCON_TXREQ);
-		}
-
-		netif_wake_queue(priv->ndev);
-
-        return 0;
-    }
-	else
-	{
-    	return 0;
+		netdev_completed_queue(priv->ndev, 1, frame_len);
 	}
 
-}
-/*
-static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
-{
-	struct mcp251xfd_tx_ring *tx_ring = &priv->tx[0];
-	struct net_device_stats *stats = &priv->ndev->stats;
-	u8 tx_tail;
-	int err;
-
-	if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT)
+	// Log/report the error statistics
+	stats->tx_errors++;
+	if (fifo_sta & MCP251XFD_REG_FIFOSTA_TXLARB)
 	{
-		u32 fifosta;
-		regmap_read(priv->map_reg, MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr), &fifosta);
-		netdev_info(priv->ndev, "FIFO Status: 0x%08x (Full if bit0 is 0)\n", fifosta);
-		
-		//must update interruput flags for the read only's bits to be reset via application
-		err = regmap_update_bits(priv->map_reg,
-					MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
-					MCP251XFD_REG_FIFOSTA_TXATIF,
-					0x0);
-		if (err)
-			return err;
-		
 		stats->tx_aborted_errors++;
-		stats->tx_errors++;
-		
-		// Free the echo SKB so that stack knows that the packet has been sent (even though it was aborted).
-		tx_tail = mcp251xfd_get_tx_tail(tx_ring);
-		can_free_echo_skb(priv->ndev, tx_tail, NULL);
-		
-		// Manually move the HW's TX FIFO pointer forward
-		// When this bit is set, the FIFO tail will increment by a single message.
-		err = regmap_update_bits(priv->map_reg,	
-							 MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
-							 MCP251XFD_REG_FIFOCON_UINC,
-							 MCP251XFD_REG_FIFOCON_UINC);
-		if (err)
-			return err;
-
-		err = regmap_update_bits(priv->map_reg, 
-                             MCP251XFD_REG_TEFCON,
-                             MCP251XFD_REG_TEFCON_UINC,
-                             MCP251XFD_REG_TEFCON_UINC);
-        if (err) 
-			return err;
-
-		// Advance the TEF tail for one-shot failed frame, so that the TEF entry is freed 
-		// and can be used for the next transmission.
-		tx_ring->tail++;
-		priv->tef->tail++;
-
-		//int 1 packet, 0 bytes (packet was aborted, it is not counted as bytes sent).
-		netdev_completed_queue(priv->ndev, 1, 0);		
-		smp_mb();
-		netif_wake_queue(priv->ndev);
-
 		netdev_info(priv->ndev,
-		"One-shot send attempt fail handled. "
-		"Ring advanced to %u\n",
-		tx_ring->tail);
-		return 0;
+				"One-shot TX: lost arbitration (FIFO %d)\n",
+				tx_ring->fifo_nr);
 	}
 
-	else
+	if (fifo_sta & MCP251XFD_REG_FIFOSTA_TXERR) 
 	{
-		netdev_info(priv->ndev, "%s\n", __func__);
-		
-		return 0;
+		stats->tx_aborted_errors++;
+		netdev_info(priv->ndev,
+				"One-shot TX: bus error (FIFO %d)\n",
+				tx_ring->fifo_nr);
 	}
+	if (fifo_sta & MCP251XFD_REG_FIFOSTA_TXABT) 
+	{
+		stats->tx_aborted_errors++;
+		netdev_info(priv->ndev,
+				"One-shot TX: message aborted (FIFO %d)\n",
+				tx_ring->fifo_nr);
+	}
+
+	/* Clear the FIFO status flags */
+	err = regmap_update_bits(priv->map_reg,
+				MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
+				MCP251XFD_REG_FIFOSTA_TXATIF | 
+				MCP251XFD_REG_FIFOSTA_TXLARB |
+				MCP251XFD_REG_FIFOSTA_TXERR | 
+				MCP251XFD_REG_FIFOSTA_TXABT,
+				0x0);
+	if (err) 
+		return err;
+
+	if (mcp251xfd_get_tx_free(tx_ring))
+	{
+		smp_mb(); 
+		netif_wake_queue(priv->ndev);
+	}
+
+	return 0;
+
+	/* PHYSICALLY move the HW pointers forward.
+		* This "flushes" the aborted entry from the hardware RAM.
+		*/
+	// err = regmap_update_bits(priv->map_reg, 
+	// 			MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
+	// 			MCP251XFD_REG_FIFOCON_UINC, 
+	// 			MCP251XFD_REG_FIFOCON_UINC);
+	// if (err)
+	// 	return err;
+	/* ADVANCE WITH NEW TRANSMISSION
+		* This is only needed if there are more messages already waiting in the ring.
+	*/
+	// if (mcp251xfd_get_tx_free(tx_ring) < tx_ring->obj_num) {
+	// 	err = regmap_update_bits(priv->map_reg, 
+	// 							MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
+	// 							MCP251XFD_REG_FIFOCON_TXREQ, 
+	// 							MCP251XFD_REG_FIFOCON_TXREQ);
+	// }
 }
-*/
+
 static int mcp251xfd_handle_ivmif(struct mcp251xfd_priv *priv)
 {
 	struct net_device_stats *stats = &priv->ndev->stats;
