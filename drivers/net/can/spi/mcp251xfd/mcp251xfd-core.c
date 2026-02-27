@@ -969,6 +969,8 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 	struct net_device_stats *stats = &priv->ndev->stats;
     int err;
 	u32 sta_before, sta_after;
+	u8 tx_tail;
+
 
     if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT) 
 	{
@@ -985,7 +987,6 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 
 		/* PHYSICALLY move the HW pointers forward.
          * This "flushes" the aborted entry from the hardware RAM.
-         * We do NOT increment software tails here.
          */
         err = regmap_update_bits(priv->map_reg, 
 					MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
@@ -995,18 +996,14 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
             return err;
 
 		/* Free the echo SKB so that stack knows that the packet has been sent (even though it was aborted). */
-		can_free_echo_skb(priv->ndev, tx_ring->tail % tx_ring->obj_num, NULL);
+		tx_tail = mcp251xfd_get_tx_tail(tx_ring);
+		can_free_echo_skb(priv->ndev, tx_tail, NULL);
 		tx_ring->tail++;
 		stats->tx_errors++;
 		stats->tx_aborted_errors++;
-		
-		regmap_read(priv->map_reg, MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr), &sta_after);
+		netdev_completed_queue(priv->ndev, 1, 0);
 
-		netdev_info(priv->ndev, 
-                    "One-Shot Fail: FIFO %d Index moved %d -> %d\n",
-                    tx_ring->fifo_nr,
-                    (sta_before >> 8) & 0x1F, // Extract FIFOCI [cite: 1691]
-                    (sta_after >> 8) & 0x1F);
+		regmap_read(priv->map_reg, MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr), &sta_after);
 
 		/* ADVANCE WITH NEW TRANSMISSION
 	     * This is only needed if there are more messages already waiting in the ring.
@@ -1018,14 +1015,6 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 									MCP251XFD_REG_FIFOCON_TXREQ);
 		}
 
-		/*
-		// request message abort TXREQ (transmit queue control reg bit 9) is redundant if TXATIF is set
-		err = regmap_update_bits(priv->map_reg,
-                                 MCP251XFD_REG_TXQCON(tx_ring->fifo_nr),
-                                 MCP251XFD_REG_TXQCON_TXREQ, 0x0);
-		if (err) 
-			return err;
-		*/
 		netif_wake_queue(priv->ndev);
 
         return 0;
