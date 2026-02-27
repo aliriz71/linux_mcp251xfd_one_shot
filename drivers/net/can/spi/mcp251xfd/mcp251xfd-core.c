@@ -995,7 +995,7 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
             return err;
 
 		/* Free the echo SKB so that stack knows that the packet has been sent (even though it was aborted). */
-		can_free_echo_skb(priv->ndev, tx_tail, NULL);
+		can_free_echo_skb(priv->ndev, tx_ring->tail % tx_ring->obj_num, NULL);
 		tx_ring->tail++;
 		stats->tx_errors++;
 		stats->tx_aborted_errors++;
