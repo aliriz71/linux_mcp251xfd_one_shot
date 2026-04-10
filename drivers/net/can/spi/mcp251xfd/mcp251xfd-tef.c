@@ -102,7 +102,8 @@ mcp251xfd_handle_tefif_one(struct mcp251xfd_priv *priv,
 	tef_tail = mcp251xfd_get_tef_tail(priv);
 
 	/*
-	 * Check if this TEF entry is a failed transmission. 
+	 * Check if this TEF entry is a failed transmission, though it should not, since TEF entries are 
+	 * only written by the hardware for successfully transmitted CAN frames.
 	 *
 	 * Read the TX FIFO stat regs for TXATIF with TXERR and/or TXLARB are set by the hardware 
 	 * when a transmission attempt was made, but the message was not sent because of 
