@@ -1051,25 +1051,6 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 	}
 
 	return 0;
-
-	/* PHYSICALLY move the HW pointers forward.
-		* This "flushes" the aborted entry from the hardware RAM.
-		*/
-	// err = regmap_update_bits(priv->map_reg, 
-	// 			MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
-	// 			MCP251XFD_REG_FIFOCON_UINC, 
-	// 			MCP251XFD_REG_FIFOCON_UINC);
-	// if (err)
-	// 	return err;
-	/* ADVANCE WITH NEW TRANSMISSION
-		* This is only needed if there are more messages already waiting in the ring.
-	*/
-	// if (mcp251xfd_get_tx_free(tx_ring) < tx_ring->obj_num) {
-	// 	err = regmap_update_bits(priv->map_reg, 
-	// 							MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
-	// 							MCP251XFD_REG_FIFOCON_TXREQ, 
-	// 							MCP251XFD_REG_FIFOCON_TXREQ);
-	// }
 }
 
 static int mcp251xfd_handle_ivmif(struct mcp251xfd_priv *priv)

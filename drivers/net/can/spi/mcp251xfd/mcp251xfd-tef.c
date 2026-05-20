@@ -100,60 +100,6 @@ mcp251xfd_handle_tefif_one(struct mcp251xfd_priv *priv,
 	}
 
 	tef_tail = mcp251xfd_get_tef_tail(priv);
-
-	/*
-	 * Check if this TEF entry is a failed transmission, though it should not, since TEF entries are 
-	 * only written by the hardware for successfully transmitted CAN frames.
-	 *
-	 * Read the TX FIFO stat regs for TXATIF with TXERR and/or TXLARB are set by the hardware 
-	 * when a transmission attempt was made, but the message was not sent because of 
-	 * an error (e.g. arbitration loss or bus error/short). For one-shot mode, the 
-	 * frame possibly did not get on the bus.
-	 *
-	 * Free the echo skb so the frame is not reported as delivered.
-	 */
-
-	if (priv->can.ctrlmode & CAN_CTRLMODE_ONE_SHOT) 
-	{
-		u32 tx_fifo_sta;
-		int err;
-
-		err = regmap_read(priv->map_reg,
-					MCP251XFD_REG_FIFOSTA(priv->tx->fifo_nr),
-					&tx_fifo_sta);
-		if (err)
-			return err;
-
-		if (( tx_fifo_sta & (MCP251XFD_REG_FIFOSTA_TXATIF) &&
-			tx_fifo_sta & (MCP251XFD_REG_FIFOSTA_TXLARB | 
-				MCP251XFD_REG_FIFOSTA_TXERR))) 
-		{
-			/* Frame not delivered, free the echo skb and report the error */
-			can_free_echo_skb(priv->ndev, tef_tail, frame_len_ptr);
-			stats->tx_errors++;
-
-			netdev_info(priv->ndev,
-				"One-shot TEF check: message failed to transmit (FIFO %d)\n",
-				priv->tx->fifo_nr);
-			if (tx_fifo_sta & MCP251XFD_REG_FIFOSTA_TXLARB)
-			{
-				stats->tx_aborted_errors++;
-				netdev_info(priv->ndev,
-					"One-shot TEF check: lost arbitration (FIFO %d)\n",
-					priv->tx->fifo_nr);
-			}
-			
-			// if (priv->can.echo_skb[tef_tail]) 
-			// {
-			// 	can_free_echo_skb(priv->ndev, tef_tail, frame_len_ptr);
-			// 	priv->tef->tail++;
-			// 	netdev_completed_queue(priv->ndev, 1, *frame_len_ptr);
-			// }
-			priv->tef->tail++;
-
-			return 0;
-		}
-	}
 	skb = priv->can.echo_skb[tef_tail];
 	if (skb)
 		mcp251xfd_skb_set_timestamp_raw(priv, skb, hw_tef_obj->ts);
