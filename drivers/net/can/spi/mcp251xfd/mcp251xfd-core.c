@@ -1033,6 +1033,18 @@ static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 				tx_ring->fifo_nr);
 	}
 
+	/* Write TXREQ=0 to FIFOCON: requests abort of the stuck frame.                                    
+	* The chip then advances FIFOCI past the failed frame and sets TXABT.                                                                                                                                    
+	* Without this, FIFOCI stays stuck and mcp251xfd_get_tef_len produces                             
+	* wrong len values, causing stale TEF entries to be processed.                                                                                                                                           
+	* regmap_update_bits does read-modify-write here, preserving FSIZE/TXAT/etc. */                   
+	err = regmap_update_bits(priv->map_reg,                                                                                                                                                                   
+				MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),                                               
+				MCP251XFD_REG_FIFOCON_TXREQ,                                                                                                                                                                  
+				0);                                                                                    
+	if (err)                                                                                                                                                                                                  
+		return err; 
+
 	/* Clear the FIFO status flags */
 	err = regmap_update_bits(priv->map_reg,
 				MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
