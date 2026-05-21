@@ -966,89 +966,36 @@ static int mcp251xfd_handle_rxovif(struct mcp251xfd_priv *priv)
 static int mcp251xfd_handle_txatif(struct mcp251xfd_priv *priv)
 {
 	struct mcp251xfd_tx_ring *tx_ring = priv->tx;
-	struct mcp251xfd_tef_ring *tef = priv->tef;
-	struct net_device_stats *stats = &priv->ndev->stats;
-	u32 fifo_sta;
+	u8 tx_tail;
 	unsigned int frame_len = 0;
-	u8 tef_tail;
-    int err;
+	int err;
 
-	/* Read status before increment to capture current index */
-	err = regmap_read(priv->map_reg,
-				MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
-				&fifo_sta);
-	if (err) 
-		return err;
+	// Get current software tail position
+	tx_tail = mcp251xfd_get_tx_tail(tx_ring);
 
-	/* If TXATIF is not set, there is no aborted/lost frame to handle */
-	if (!(fifo_sta & MCP251XFD_REG_FIFOSTA_TXATIF)) 
-		return 0;
+	// Free the echo skb for the failed frame 
+	can_free_echo_skb(priv->ndev, tx_tail, &frame_len);
 
-	/*
-		* A tx attempt was made, but the message was not sent 
-		* because of an error (e.g. arbitration loss or bus error/short).
-		* For one-shot mode, the frame did not get on the bus.
-		* 
-		* If handle_tefif has already used a TEF entry for the failed
-		* frame, the echo_skb should be NULL.
-		* 
-		* If no TEF entry was generated, and the TXATIF went off first,
-		* then the TEF entry must be freed here since a successful transmission
-		* did not occur. If that is the case, the echo_skb will be non-NULL 
-		* and is pending. It must be freed here
-		*/
-
-	tef_tail = mcp251xfd_get_tef_tail(priv);
-
-	if (priv->can.echo_skb[tef_tail]) 
-	{
-		can_free_echo_skb(priv->ndev, tef_tail, &frame_len);
-		tef->tail++;
-		tx_ring->tail++;
-		netdev_completed_queue(priv->ndev, 1, frame_len);
-	}
-
-	// Log/report the error statistics
-	stats->tx_errors++;
-	if (fifo_sta & MCP251XFD_REG_FIFOSTA_TXLARB)
-	{
-		stats->tx_aborted_errors++;
-		netdev_info(priv->ndev,
-				"One-shot TX: lost arbitration (FIFO %d)\n",
-				tx_ring->fifo_nr);
-	}
-
-	if (fifo_sta & MCP251XFD_REG_FIFOSTA_TXERR) 
-	{
-		stats->tx_aborted_errors++;
-		netdev_info(priv->ndev,
-				"One-shot TX: bus error (FIFO %d)\n",
-				tx_ring->fifo_nr);
-	}
-	if (fifo_sta & MCP251XFD_REG_FIFOSTA_TXABT) 
-	{
-		stats->tx_aborted_errors++;
-		netdev_info(priv->ndev,
-				"One-shot TX: message aborted (FIFO %d)\n",
-				tx_ring->fifo_nr);
-	}
-
-	/* Clear the FIFO status flags */
+	/* Advance chip TX FIFO by writing UINC to FIFOCON (->this clears TXATIF) */
 	err = regmap_update_bits(priv->map_reg,
-				MCP251XFD_REG_FIFOSTA(tx_ring->fifo_nr),
-				MCP251XFD_REG_FIFOSTA_TXATIF | 
-				MCP251XFD_REG_FIFOSTA_TXLARB |
-				MCP251XFD_REG_FIFOSTA_TXERR | 
-				MCP251XFD_REG_FIFOSTA_TXABT,
-				0x0);
-	if (err) 
+							MCP251XFD_REG_FIFOCON(tx_ring->fifo_nr),
+							MCP251XFD_REG_FIFOCON_UINC,
+							MCP251XFD_REG_FIFOCON_UINC);
+	if (err)
 		return err;
 
-	if (mcp251xfd_get_tx_free(tx_ring))
-	{
-		smp_mb(); 
-		netif_wake_queue(priv->ndev);
-	}
+	// Advance BOTH tails to stay in sync
+	tx_ring->tail++;
+	priv->tef->tail++;
+
+	// Account for the dropped frame 
+	netdev_completed_queue(priv->ndev, 1, frame_len);
+
+	// Wake the queue
+	netif_wake_queue(priv->ndev);
+
+	netdev_info(priv->ndev, "One-shot TX failed (FIFO %d). Tail: tx=%u tef=%u\n",
+				tx_ring->fifo_nr, tx_ring->tail, priv->tef->tail);
 
 	return 0;
 }
