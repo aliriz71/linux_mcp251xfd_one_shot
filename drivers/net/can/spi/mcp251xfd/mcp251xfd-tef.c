@@ -221,6 +221,12 @@ int mcp251xfd_handle_tefif(struct mcp251xfd_priv *priv)
 	if (err)
 		return err;
 
+
+	
+	// Prevent reading the wrong index (already freed up slot)
+	if (len == 0)
+		goto out_netif_wake_queue;
+
 	tef_tail = mcp251xfd_get_tef_tail(priv);
 	l = mcp251xfd_get_tef_linear_len(priv, len);
 	err = mcp251xfd_tef_obj_read(priv, hw_tef_obj, tef_tail, l);
